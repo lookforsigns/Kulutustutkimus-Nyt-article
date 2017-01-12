@@ -1,0 +1,365 @@
+### Marjoriikka Ylisiurua Helsingin yliopisto 19 Dec 2016
+# Kuluttajatutkimus Nyt! journal analysis code:
+
+# modeling:
+# LDA topic modeling for Suomi24-data
+# includes superfluous code
+
+import logging
+import os
+from gensim import corpora, models, similarities, utils
+from gensim.corpora import TextCorpus, MmCorpus, Dictionary
+from collections import defaultdict
+from pprint import pprint
+import json
+import csv
+
+import nltk
+import nltk.data
+from nltk import snowball
+from nltk.corpus import stopwords
+
+#from sklearn.feature_extraction.text import CountVectorizer
+#from sklearn.feature_extraction.text import TfidfTransformer
+#from sklearn.naive_bayes import MultinomialNB
+
+## init
+
+#logging.basicConfig(format = "%(asctime)s : %(levelname)s : %(message)s", level=logging.INFO)
+logging.basicConfig(format = "%(asctime)s : %(levelname)s", level=logging.INFO)
+#wnLemmatizer = nltk.stem.wordnet.WordNetLemmatizer() #import nltk
+#finStemmatizer = snowball.FinnishStemmer()
+#count_vect = CountVectorizer() #from sklearn.feature_extraction.text import CountVectorizer
+#tfidf_transformer = TfidfTransformer() #from sklearn.feature_extraction.text import TfidfTransformer
+#multinomial_classifier = MultinomialNB() #from sklearn.naive_bayes import MultinomialNB
+
+processedText = []
+openFileName = []
+
+sampleData = False # kiikku: analysoidaanko sample (True) vai koko aineisto (False)
+existingLemmaset = False # kiikku: analysoidaanko valmiiksi poimittu lemmatiedosto (yhdistetty.csv)
+
+if sampleData:
+
+    topicNumber = 6 # how many topics to search
+    searchDirectorySample=("D://Terveysdata/sample6/") # import deduplicated csv
+    outcomeSampleDir = ("D://Terveysdata/sample6")
+    outcomeGensimSampleDir = ("D:/Terveysdata/sample6") #gensim output filepath
+    
+    #topicNumber = 8 # how many topics to search
+    #searchDirectorySample=("D://Terveysdata/sample8/") # import deduplicated csv
+    #outcomeDirSample = ("D://Terveysdata/sample8/")
+
+    #topicNumber = 20 # how many topics to search
+    #searchDirectorySample=("D://Terveysdata/sample20/") # import deduplicated csv
+    #outcomeDirSample = ("D://Terveysdata/sample20/")
+
+    #topicNumber = 30 # how many topics to search
+    #searchDirectorySample=("D://Terveysdata/sample30/") # import deduplicated csv
+    #outcomeDirSample = ("D://Terveysdata/sample30/")
+
+    #topicNumber = 50 # how many topics to search
+    #searchDirectorySample=("D://Terveysdata/sample50/") # import deduplicated csv
+    #outcomeDirSample = ("D://Terveysdata/sample50/")
+
+    #topicNumber = 100 # how many topics to search
+    #searchDirectorySample=("D://Terveysdata/sample100/") # import deduplicated csv
+    #outcomeDirSample = ("D://Terveysdata/sample100/")
+
+else:
+
+    topicNumber = 150 # 6, 30, 150 for Suomi24 Terveys Kulutustutkimus Nyt!
+    searchDirectory=("C://Users/ylisiuru/Downloads/Terveysdata/") # import combined csv
+    outcomeDir = ("C://Users/ylisiuru/Downloads/Terveysdata/results/")
+    outcomeGensimDir = ("C:/Users/ylisiuru/Downloads/Terveysdata/results/") # gensim outcome filepath
+    
+if sampleData:
+    appearance = 5
+    howLarge = 1000
+else:
+    appearance = 10 # how many times a word must be present to be included in the dictionary
+    howLarge = 50000
+
+
+
+## def createStringFile(topDir,saveFileName):
+# create one file with all relevant data as string per line
+# works
+#def createStringFile(topDir,saveFileName):
+#    for root, dirs, files in os.walk(topDir):
+#        for fname in [fname for fname in files if fname.endswith("json")]:
+#            texts = []
+#            #print("filename")
+#            #print(fname)
+#            #print(root)
+#            # read each doc as one big string
+#            with open(os.path.join(root, fname), 'r') as openFile:
+#                documents = json.load(openFile)
+#
+#                with open(saveFileName,"a") as writeFile:
+#                    for i in range(0, len(documents)):
+#                        #print(documents[i]["title"])
+#                        a = documents[i]["title"]+" "+documents[i]["anonnick"]+" "+documents[i]["body"]+"\n"
+#                        writeFile.write(a)
+#
+#        with open(saveFileName,"r") as openFile:
+#            texts.append(openFile.read())
+#        #print("iterated documents")
+#        #print(texts)     
+#        return texts
+    
+## class MyCorpus(object):
+# initialize corpus with dictionary and top directory
+# then read all files in the top dir and preprocess each 
+class MyCorpus(object):
+
+    def __init__(self, top_dir):
+        #self = corpora.MmCorpus("D:\\results\corpus.mm")
+        self.top_dir = top_dir
+        self.dictionary = Dictionary(iter_documents(top_dir))
+    
+    def __iter__(self):
+        for line in iter_documents(self.top_dir):
+            #print("line")
+            #print(line)
+            yield preProcess(line)
+
+def iter_documents(top_dir):
+    for root, dirs, files in os.walk(top_dir):
+        for fname in [fname for fname in files if fname.endswith("txt")]:
+            texts = []
+            with open(os.path.join(root, fname), 'r') as openFile:
+                for line in openFile:
+                    #print("iter documents")
+                    #print(line)
+                    yield line
+
+            # read each doc as one big string
+            
+            # break each doc into utf tokens
+            #yield nltk.word_tokenize(texts)
+            #yield utils.tokenize(docs, lower=True, errors = "ignore")
+            #yield utils.tokenize("Kissa k‰veli kadulla", lower=True, errors = "ignore")
+        #yield preProcess(texts)
+            
+## def preProcess(documents):
+# take a list of paragraph-strings
+# tokenize each paragraph-string, lowercase, clean stopwords
+# stem/lemmatize
+def preProcess(documents):
+
+    ## init
+    tokens = []
+    filtered_tokens = []
+    tokens_stopwords = []
+    tokens_stemmed = []
+
+    # remove trash from text
+    # especially consider the ads
+    #stopSigns = "/p p a quot > < ( ) ! , . : ; & ? * NUOLI + [ ] ... / # '' -- -blank /a ì î"
+    stopSigns = "/p p a quot > < ( ) ! , . : ; & ? * NUOLI + [ ] ... / # '' -- -blank /a ì î http paypal"
+    stoplist = [w for w in stopSigns.split()]
+    stoplist = stoplist+(stopwords.words("finnish"))
+
+    ## tokenize the sentence paragraphs & edit
+
+    tokens = [nltk.word_tokenize(el) for el in documents] # el = string paragraph element in list
+    #print("TOKENIZED DOCUMENT")
+    #print(tokens)
+
+    # lowercase the tokens and clean the documents of stopwords
+    for text in tokens:
+        filtered_tokens = [word.lower() for word in text if not word.lower() in stoplist]
+        #print("\n tokenoitu pienikirjaiminen teksti, josta on poistettu stop-sanat kuten ei ja !")
+        #print(sorted(filtered_tokens)) # print each tokenized document paragraph
+        tokens_stopwords.append(filtered_tokens)
+
+    #print("\n putsatut tekstit elementeitt‰in listassa")
+    #print(sorted(tokens_stopwords)) # print the whole set of tokenized texts before further filtering
+
+    # if not using lemmatized word list from Korp
+    # for each token in list, stem all remaining words
+    #if not lemmaSample:
+    #    for document in tokens_stopwords:
+    #        tokens = [finStemmatizer.stem(x) for x in document]
+    #        tokens_stemmed.append(tokens)
+    #else:
+    tokens_stemmed = tokens_stopwords
+    #option2: don't stem
+    #tokens_stemmed = tokens_stopwords
+
+    #print("\n stemmattu teksti")
+    #print(sorted(tokens_stemmed))
+
+    # returned list of tokens
+    return tokens_stemmed
+
+## def weedTokens(tokens_stemmed):
+# weed token list just to include those who appear more than APPEARANCE # of times
+# encode token strings
+def weedTokens(tokens_stemmed):
+    print("weeding tokens")
+
+    ## init
+    frequency = defaultdict(int)
+    tokens_enough = []
+
+    
+    ## discard tokens appearing only once
+    for token_list in tokens_stemmed:
+        #print("token list in tokens stemmed")
+        #print(token_list)
+        for token in token_list:
+            if token:
+                frequency[token] += 1
+ 
+    # remove words that only appear APPEARANCE amount of times and return them
+    # encode the strings to utf-8 at the same time
+    for tokens in tokens_stemmed:
+        filtered_tokens = [bytes(token, "utf-8") for token in tokens if frequency[token] > appearance]
+        tokens_enough.append(filtered_tokens)
+
+    #print(tokens_enough)
+
+    return tokens_enough
+
+## def transformation(corpus,vec):
+# transformation NOT WORKING IF MATRIX TOO SPARSE?
+def transformation(corpus,vec):
+    # init transformation that is used to convert the corpus from one vector representation to another
+    # tfIdf is simple transformation
+    # it takes documents represented as bags of words counts and applies a weighting
+    # which discounts common terms (promotes rare terms)
+    # tfidf scales the resulting vector to unit length, in the Euclidean norm
+    tfidf = models.TfidfModel(corpus)
+    print("\ntfidf-transformation for corpus: format - (ID, #)")
+    print(tfidf[vec])
+
+    # transform a corpus and index it
+    index = similarities.SparseMatrixSimilarity(tfidf[corpus],num_features=2)
+
+    #query the similarity of query vector against every document in the corpus
+    sims = index[tfidf[vec]]
+    print("\nSimilarity vector: format - (sample document x corpus stem ID, similary score %)")
+    print(sims)
+    return(list(enumerate(sims)))
+
+#  -> which document is most similar to our vector what is its score
+
+## main
+
+if __name__ == "__main__":
+    # set directory
+    if sampleData:
+        os.chdir(searchDirectorySample)
+    else:
+        os.chdir(searchDirectory)
+
+    ## create new lemmaset file if needed
+    if not existingLemmaset:
+
+        # list name of every csv file in the dictionary
+        pprint("Following files found in directory: "+str(os.getcwd()))
+        for filename in os.listdir(os.getcwd()):
+            if filename.endswith(".csv"):
+                if sampleData:
+                    openFileName.append(searchDirectorySample + filename)
+                else:
+                    openFileName.append(searchDirectory + filename)
+                pprint(filename) # print names of found csv-files (in case of Terveysdata, roughly 9 filenames)
+
+        # for every file in the list, open file, go through it
+        for item in range(len(openFileName)):
+
+            ## open one file with rows of data including lemmatized sentences in one cell
+            with open(openFileName[item], "r", encoding="utf-8") as openFile: #vai latin1
+                documents = csv.DictReader(openFile, delimiter=",")
+                texts = []
+                for row in documents:
+                    a = row["lemmas"]
+                    #print(a)
+                    texts.append(a)
+
+                # for every found file, preprocess and add to previous documents (rest of the files if possible)
+                processedText = processedText + preProcess(texts)
+    
+        print("\nLopputulosteksti, jossa j‰ljell‰ lemmatut/stemmatut sanat:")
+        if sampleData:
+            foundFileName = outcomeSampleDir+"yhdistetty sample.csv"
+        else:
+            foundFileName = outcomeDir+"yhdistetty.csv"
+
+            ## lemmaset file used in dictionary creation        
+        with open(foundFileName, "w", newline='', encoding='utf-8') as foundFile:
+            print(foundFileName)
+            # pick header names from first dictionary row
+            header = processedText[0]
+            w = csv.writer(foundFile)
+            for item in processedText:
+                w.writerow([item])
+
+    #print(processedText)
+
+    else:
+        print("\nK‰ytet‰‰n entist‰ lemmasetti‰:")
+        if sampleData:
+            foundFileName = outcomeSampleDir+"yhdistetty.csv"
+        else:
+            foundFileName = outcomeDir+"yhdistetty.csv"
+        print(foundFileName)
+        # devaa t‰h‰n filen avaamiskoodi, joka tekee uuden processed text objektin
+
+
+
+    # after adding more documents, weed tokens for those who appear more than APPERANCE # of times only
+    processedText = weedTokens(processedText)
+
+    ## create dictionary & save as file
+    # create dictionary and save it for future use
+    # do this every time you update your document collection
+    dic = corpora.Dictionary(processedText)
+    #print(dic)
+    if sampleData:
+        dic.save(outcomeGensimSampleDir+"dic sample.dict") #Store the dictionary for future reference
+    else:
+        dic.save(outcomeGensimDir+"dic.dict") #Store the dictionary for future reference
+    print("\nDictionary of documents: format - (stem, ID)")
+    #print(dic.token2id)
+
+    ## create corpus & save as file
+    # create a corpus and save it for future use
+    # do this every time you update your document collection
+    #print("\nText included in corpus")
+    #print(processedText)
+    # this corpus below resides fully in RAM memory as plain python list
+    # with large datasets this won't do
+    # preferably, access each document from a file
+    corpus = [dic.doc2bow(text) for text in processedText]
+    if sampleData:
+        corpora.MmCorpus.serialize(outcomeGensimSampleDir+"corpus sample.mm",corpus) 
+    else:
+        corpora.MmCorpus.serialize(outcomeGensimDir+"corpus.mm",corpus) 
+    print("\nCorpus of documents: format - (ID, # of occurrences)")
+    #print(corpus)
+
+    if sampleData:
+        corpus_mem_friendly = MyCorpus(outcomeDirSample)
+    else:
+        corpus_mem_friendly = MyCorpus(outcomeDir)
+        
+    processedCorpus = weedTokens(corpus_mem_friendly)
+
+    print("processed Corpus")
+    for vec in processedCorpus:
+        print("vec foo")
+        print(vec)
+
+
+    ## LDA topic modeling
+
+    lda = models.ldamodel.LdaModel(corpus=corpus, id2word=dic, num_topics=topicNumber, update_every=1, chunksize=howLarge, passes=10)
+
+    print(lda.show_topics(num_topics=topicNumber, num_words=10, log = True, formatted = True))
+
+
+

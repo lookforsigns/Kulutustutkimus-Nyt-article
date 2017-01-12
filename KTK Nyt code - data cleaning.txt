@@ -1,0 +1,115 @@
+### Marjoriikka Ylisiurua 15 Dec 2016
+# Kuluttajatutkimus Nyt! journal code
+
+# data cleaning:
+# each csv row includes a Suomi24 sentence
+# csv coming from FinClarin DB has duplicate rows for each word in the sentence
+# necessary to remove duplicates and save the unique rows in chunks
+
+import json
+import re
+from pprint import pprint
+import datetime
+import codecs
+import os
+import csv
+
+## init
+
+searchToken = ""
+openFileName = []
+uniqueRows = []
+header = []
+
+# set directory with source files
+searchDirectory = "C://Users/ylisiuru/OneDrive - University of Helsinki/Suomi24 terveysdata/"
+
+# counter for searched files;
+# .xls maximum is 1,048,576 rows
+# 17kb file has 62k rows
+
+# with Suomi24 terveysdata, save 155 file search results into one result file
+# with talousdata, 3 files is enough
+# if you want one file per one result file, put in 1. Counter will break but NVM til next version
+howManyFiles = 155
+searchedFiles = howManyFiles
+
+# counter for result files
+resultFiles = 0
+
+# counter for duplicate rows
+duplicateRows = 0
+
+# counter for how many unique sentences are found in one file
+foundSentences = 0
+
+# resulting filenames
+foundFileName = ""
+foundFileNameStart = "E://Terveysdata/"
+foundFileNameEnd = " full data.csv"
+
+## main:
+# set directory that has the csv files
+# loop through every csv file in the directory
+# for each file, open file, read it, analyse it
+# for every n = resultFileCounter files, save results on result file
+
+# set directory
+os.chdir(searchDirectory)
+
+# list name of every csv file in the dictionary
+#pprint("Following files found in directory "+str(os.getcwd()))
+for filename in os.listdir(os.getcwd()):
+    if filename.endswith(".csv"):
+        openFileName.append(searchDirectory + filename)
+        pprint(filename) # print name of found csv-file (in case of full Terveys data, 1200 filenames)
+
+# for every file in the list, open file, go through it
+for item in range(len(openFileName)):
+    with open(openFileName[item], encoding="utf-8") as data_file:
+        foundSentences = 0
+        reader = csv.DictReader(data_file, delimiter=",")
+        #pprint("Datafile read to memory...")
+        for row in reader:
+            if row["tokens"] != searchToken:
+                searchToken = row["tokens"]
+                foundSentences += 1
+                #pprint(str(duplicateRows)+" duplicate rows found")
+                #pprint(str(searchToken))
+                duplicateRows = 0
+                # must append the whole row as it's the lemmas that will be used in analysis but tokens will be read
+                uniqueRows.append(row)
+            else:
+                duplicateRows+=1
+        #pprint(str(duplicateRows)+" duplicate rows found for last sentence")
+        #pprint(str(foundSentences) + " unique sentences found, file counter at "+str(searchedFiles))
+
+        # if counter is still at the maximum, create a new file            
+        if (howManyFiles == 1) or searchedFiles == (howManyFiles): 
+            resultFiles+=1 # start a new file
+            searchedFiles -= 1 # vähennä laskuria
+            foundFileName = foundFileNameStart+str(resultFiles)+foundFileNameEnd
+            with open(foundFileName, "w", newline='', encoding='utf-8') as foundFile:
+                # pick header names from first dictionary row
+                header = uniqueRows[0].keys()
+                w = csv.DictWriter(foundFile, header)
+                w.writeheader()
+                for item in range(len(uniqueRows)):
+                    w.writerow(uniqueRows[item])
+            
+        else:    # if counter is not at maximum:
+            searchedFiles-=1 # lower the counter
+            foundFileName = foundFileNameStart+str(resultFiles)+foundFileNameEnd
+            # append resulting rows into old file without a header
+            with open(foundFileName, "a", newline='', encoding='utf-8') as foundFile:
+                w = csv.DictWriter(foundFile, header)
+                for item in range(len(uniqueRows)):
+                    w.writerow(uniqueRows[item])
+            # if counter reached the end, restart the counter
+            if searchedFiles <1: 
+                searchedFiles = howManyFiles
+        # nollaa tallennettava lista
+        uniqueRows = []
+        pprint(howManyFiles+" combined into one file")
+
+pprint("All files ready!")
